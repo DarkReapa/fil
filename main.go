@@ -883,6 +883,51 @@ func libraryItemHandler(store *libraryStore) http.HandlerFunc {
 	}
 }
 
+func libraryFolderHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			Name    string `json:"name"`
+			Seasons int    `json:"seasons"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "invalid payload", http.StatusBadRequest)
+			return
+		}
+		name := strings.TrimSpace(payload.Name)
+		if name == "" {
+			http.Error(w, "invalid name", http.StatusBadRequest)
+			return
+		}
+		if payload.Seasons < 1 || payload.Seasons > 50 {
+			http.Error(w, "invalid seasons", http.StatusBadRequest)
+			return
+		}
+		clean, err := sanitizePath(name)
+		if err != nil {
+			http.Error(w, "invalid path", http.StatusBadRequest)
+			return
+		}
+		seriesDir := filepath.Join(mediaDir, clean)
+		if err := os.MkdirAll(seriesDir, 0o755); err != nil {
+			http.Error(w, "failed to create folder", http.StatusInternalServerError)
+			return
+		}
+		for i := 1; i <= payload.Seasons; i++ {
+			seasonName := fmt.Sprintf("Сезон %d", i)
+			seasonDir := filepath.Join(seriesDir, seasonName)
+			if err := os.MkdirAll(seasonDir, 0o755); err != nil {
+				http.Error(w, "failed to create folder", http.StatusInternalServerError)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusCreated)
+	}
+}
+
 func streamsHandler(sm *streamManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -1230,6 +1275,7 @@ func main() {
 	mux.HandleFunc("/api/proxy", proxyHandler)
 	mux.HandleFunc("/api/library", libraryHandler(library))
 	mux.HandleFunc("/api/library/item", libraryItemHandler(library))
+	mux.HandleFunc("/api/library/folder", libraryFolderHandler())
 	mux.HandleFunc("/api/streams", streamsHandler(streams))
 	mux.HandleFunc("/api/streams/", streamActionHandler(streams))
 	mux.HandleFunc("/api/rooms", roomsHandler(rooms))
