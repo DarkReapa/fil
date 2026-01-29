@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Neon Media Library</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div class="glow"></div>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Neon Library</p>
+      <h1>Фильмы, сериалы и трансляции в одном месте</h1>
+      <p class="subtitle">Загружайте каталоги, добавляйте URL, запускайте RTMP через HLS и смотрите всё с одного плеера.</p>
+    </div>
+    <div class="status">
+      <span class="dot"></span>
+      <span>Сервер активен</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Библиотека</h2>
+        <button class="btn" id="refresh">Обновить</button>
+      </div>
+      <div class="library" id="library"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Загрузка медиа</h2>
+      <div class="upload-area" id="dropzone">
+        <input type="file" id="fileInput" multiple webkitdirectory directory />
+        <p>Перетащите фильмы/сериалы сюда или выберите файлы/каталоги.</p>
+        <button class="btn primary" id="browse">Выбрать файлы или папки</button>
+      </div>
+      <div class="upload-progress" id="uploadProgress"></div>
+
+      <h2>Добавить поток</h2>
+      <div class="stream-form">
+        <input type="text" id="streamName" placeholder="Название потока" />
+        <input type="url" id="streamUrl" placeholder="URL (HLS, MP4, RTMP...)" />
+        <label class="toggle">
+          <input type="checkbox" id="persistStream" checked />
+          <span>Сохранять поток постоянно (иначе временно)</span>
+        </label>
+        <button class="btn primary" id="addStream">Сохранить</button>
+      </div>
+
+      <div class="streams" id="streams"></div>
+    </section>
+
+    <div class="side-stack">
+      <section class="panel player-panel">
+        <div class="panel-header">
+          <h2>Плеер</h2>
+          <div class="chip" id="nowPlaying">Ничего не выбрано</div>
+        </div>
+        <video id="player" class="player" controls playsinline></video>
+        <div class="player-actions">
+          <input type="url" id="directUrl" placeholder="Вставьте ссылку на видео или поток" />
+          <button class="btn" id="playUrl">Смотреть по URL</button>
+        </div>
+        <div class="watch-together">
+          <button class="btn primary" id="createRoom">Создать комнату</button>
+          <input type="text" id="roomLink" placeholder="Ссылка для совместного просмотра" readonly />
+          <button class="btn" id="copyRoom">Копировать</button>
+        </div>
+        <p class="hint">RTMP будет автоматически конвертирован в HLS при наличии FFmpeg на сервере. Для совместного просмотра поделитесь ссылкой комнаты.</p>
+      </section>
+
+      <section class="panel chat-panel">
+        <div class="panel-header">
+          <h2>Чат трансляции</h2>
+          <span class="chip" id="roomStatus">Комната не выбрана</span>
+        </div>
+        <div class="chat-messages" id="chatMessages"></div>
+        <div class="chat-input">
+          <input type="text" id="chatName" placeholder="Ваше имя" />
+          <input type="text" id="chatText" placeholder="Сообщение..." />
+          <button class="btn" id="sendChat">Отправить</button>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
