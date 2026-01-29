@@ -6,6 +6,7 @@ const browseBtn = document.getElementById("browse");
 const dropzone = document.getElementById("dropzone");
 const refreshBtn = document.getElementById("refresh");
 const player = document.getElementById("player");
+const youtubePlayer = document.getElementById("youtubePlayer");
 const nowPlaying = document.getElementById("nowPlaying");
 const directUrl = document.getElementById("directUrl");
 const playUrlBtn = document.getElementById("playUrl");
@@ -87,7 +88,69 @@ const formatLabel = (url) => {
   return "Источник";
 };
 
+const getYouTubeEmbedUrl = (raw) => {
+  try {
+    const parsed = new URL(raw, window.location.origin);
+    const host = parsed.hostname.toLowerCase();
+    let videoId = "";
+    if (host.includes("youtu.be")) {
+      videoId = parsed.pathname.split("/").filter(Boolean)[0] || "";
+    } else if (host.includes("youtube.com")) {
+      if (parsed.pathname === "/watch") {
+        videoId = parsed.searchParams.get("v") || "";
+      } else if (parsed.pathname.startsWith("/embed/")) {
+        videoId = parsed.pathname.split("/")[2] || "";
+      } else if (parsed.pathname.startsWith("/shorts/")) {
+        videoId = parsed.pathname.split("/")[2] || "";
+      }
+    }
+    const listId = parsed.searchParams.get("list");
+    if (!videoId && listId) {
+      return `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(listId)}&autoplay=1&rel=0`;
+    }
+    if (videoId) {
+      const listParam = listId ? `&list=${encodeURIComponent(listId)}` : "";
+      return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?autoplay=1&rel=0${listParam}`;
+    }
+  } catch (error) {
+    return null;
+  }
+  return null;
+};
+
+const getDisplayLabel = (url, label) => {
+  if (!label) {
+    return formatLabel(url);
+  }
+  if (label === url || /^https?:\/\//i.test(label)) {
+    return formatLabel(url);
+  }
+  return label;
+};
+
 const setPlayerSource = (url, label) => {
+  const youtubeEmbedUrl = getYouTubeEmbedUrl(url);
+  if (youtubeEmbedUrl) {
+    if (hls) {
+      hls.destroy();
+      hls = null;
+    }
+    player.pause();
+    player.removeAttribute("src");
+    player.load();
+    player.classList.add("player-hidden");
+    youtubePlayer.src = youtubeEmbedUrl;
+    youtubePlayer.classList.add("active");
+    const displayLabel = label || "YouTube";
+    currentSource = url;
+    nowPlaying.textContent = getDisplayLabel(url, displayLabel);
+    return;
+  }
+
+  youtubePlayer.classList.remove("active");
+  youtubePlayer.src = "";
+  player.classList.remove("player-hidden");
+
   const sourceUrl = toProxiedUrl(url);
   if (hls) {
     hls.destroy();
@@ -103,7 +166,7 @@ const setPlayerSource = (url, label) => {
   }
 
   currentSource = sourceUrl;
-  nowPlaying.textContent = label || formatLabel(url);
+  nowPlaying.textContent = getDisplayLabel(url, label);
   player.play().catch(() => {});
 
   if (roomId && isHost) {
@@ -230,7 +293,7 @@ const renderStreams = (streams) => {
       });
       const data = await res.json();
       if (data.url) {
-        setPlayerSource(data.url, stream.name || stream.url);
+        setPlayerSource(data.url, stream.name || "Поток");
       }
     });
     actionButtons[1].addEventListener("click", async () => {
@@ -255,9 +318,18 @@ const createUploadItem = (file) => {
   const name = document.createElement("span");
   name.textContent = file.name;
   const status = document.createElement("span");
+  status.className = "upload-status";
   status.textContent = "Ожидание";
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "upload-close";
+  closeBtn.textContent = "×";
+  closeBtn.type = "button";
+  closeBtn.title = "Закрыть";
+  closeBtn.disabled = true;
+  closeBtn.setAttribute("aria-label", "Закрыть загрузку");
   header.appendChild(name);
   header.appendChild(status);
+  header.appendChild(closeBtn);
 
   const bar = document.createElement("div");
   bar.className = "upload-bar";
@@ -281,13 +353,21 @@ const createUploadItem = (file) => {
   item.appendChild(actions);
   uploadList.appendChild(item);
 
-  return { item, status, barFill, resumeBtn, cancelBtn };
+  return { item, status, barFill, resumeBtn, cancelBtn, closeBtn };
 };
 
 const updateUploadProgress = (entry) => {
   const percent = Math.min(100, Math.floor((entry.offset / entry.size) * 100));
   entry.ui.barFill.style.width = `${percent}%`;
   entry.ui.status.textContent = `${percent}%`;
+};
+
+const setUploadControls = (entry, { statusText, canResume, canCancel, canClose }) => {
+  entry.ui.status.textContent = statusText;
+  entry.ui.resumeBtn.disabled = !canResume;
+  entry.ui.cancelBtn.disabled = !canCancel;
+  entry.ui.closeBtn.disabled = !canClose;
+  entry.ui.closeBtn.classList.toggle("visible", canClose);
 };
 
 const uploadChunk = async (entry) => {
@@ -312,24 +392,42 @@ const uploadChunk = async (entry) => {
 };
 
 const runUpload = async (entry) => {
-  entry.ui.status.textContent = "Загрузка...";
-  entry.ui.resumeBtn.disabled = true;
+  setUploadControls(entry, {
+    statusText: "Загрузка...",
+    canResume: false,
+    canCancel: true,
+    canClose: false,
+  });
   try {
     while (entry.offset < entry.size) {
+      if (entry.canceled) {
+        return;
+      }
       await uploadChunk(entry);
     }
-    entry.ui.status.textContent = "Готово";
-    entry.ui.cancelBtn.disabled = true;
+    setUploadControls(entry, {
+      statusText: "Готово",
+      canResume: false,
+      canCancel: false,
+      canClose: true,
+    });
     await loadLibrary();
   } catch (error) {
     if (!entry.canceled) {
-      entry.ui.status.textContent = "Пауза";
-      entry.ui.resumeBtn.disabled = false;
+      setUploadControls(entry, {
+        statusText: "Пауза",
+        canResume: true,
+        canCancel: true,
+        canClose: false,
+      });
     }
   }
 };
 
 const startUpload = async (entry) => {
+  if (entry.canceled) {
+    entry.canceled = false;
+  }
   if (!entry.id) {
     const res = await fetch("/api/upload/start", {
       method: "POST",
@@ -339,7 +437,19 @@ const startUpload = async (entry) => {
     const data = await res.json();
     entry.id = data.id;
   }
-  const statusRes = await fetch(`/api/upload/status?id=${encodeURIComponent(entry.id)}`);
+  let statusRes = await fetch(`/api/upload/status?id=${encodeURIComponent(entry.id)}`);
+  if (!statusRes.ok) {
+    entry.id = null;
+    entry.offset = 0;
+    const res = await fetch("/api/upload/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: entry.path, size: entry.size }),
+    });
+    const data = await res.json();
+    entry.id = data.id;
+    statusRes = await fetch(`/api/upload/status?id=${encodeURIComponent(entry.id)}`);
+  }
   if (statusRes.ok) {
     const status = await statusRes.json();
     entry.offset = status.offset || 0;
@@ -377,9 +487,16 @@ const uploadFiles = async (files) => {
       if (entry.id) {
         await fetch(`/api/upload/cancel?id=${encodeURIComponent(entry.id)}`, { method: "POST" });
       }
-      entry.ui.status.textContent = "Отменено";
-      entry.ui.resumeBtn.disabled = true;
-      entry.ui.cancelBtn.disabled = true;
+      setUploadControls(entry, {
+        statusText: "Отменено",
+        canResume: false,
+        canCancel: false,
+        canClose: true,
+      });
+    });
+    ui.closeBtn.addEventListener("click", () => {
+      uploads.delete(path);
+      entry.ui.item.remove();
     });
 
     startUpload(entry);
@@ -427,7 +544,7 @@ dropzone.addEventListener("drop", (event) => {
 playUrlBtn.addEventListener("click", () => {
   const url = directUrl.value.trim();
   if (url) {
-    setPlayerSource(url, url);
+    setPlayerSource(url);
   }
 });
 

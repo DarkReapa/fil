@@ -234,9 +234,39 @@ body {
 
 .upload-item-header {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
+  align-items: center;
   font-size: 0.85rem;
+}
+
+.upload-status {
+  margin-left: auto;
+}
+
+.upload-close {
+  border: 1px solid rgba(57, 255, 136, 0.35);
+  background: transparent;
+  color: var(--neon);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-size: 1.1rem;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, border-color 0.2s ease;
+}
+
+.upload-close.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.upload-close:hover {
+  border-color: var(--neon);
 }
 
 .upload-bar {
@@ -327,6 +357,7 @@ body {
 
 .player-wrapper {
   position: relative;
+  min-height: 320px;
 }
 
 .player {
@@ -335,6 +366,25 @@ body {
   border-radius: 16px;
   background: #000;
   border: 1px solid var(--border);
+}
+
+.player.player-hidden {
+  display: none;
+}
+
+.youtube-player {
+  display: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: #000;
+}
+
+.youtube-player.active {
+  display: block;
 }
 
 .plyr--video {
