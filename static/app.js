@@ -20,13 +20,19 @@ const chatNameInput = document.getElementById("chatName");
 const chatTextInput = document.getElementById("chatText");
 const sendChatBtn = document.getElementById("sendChat");
 const roomStatus = document.getElementById("roomStatus");
+const chatOverlay = document.getElementById("chatOverlay");
+const searchQuery = document.getElementById("searchQuery");
+const searchTags = document.getElementById("searchTags");
+const searchGenres = document.getElementById("searchGenres");
+const applySearchBtn = document.getElementById("applySearch");
+const resetSearchBtn = document.getElementById("resetSearch");
 
 let hls = null;
+let playerInstance = null;
 let currentSource = "";
 let roomId = null;
 let isHost = false;
 let eventSource = null;
-let syncTimer = null;
 let isSyncing = false;
 
 const formatSize = (size) => {
@@ -81,8 +87,13 @@ const renderLibrary = (items) => {
     card.className = "library-item";
     card.innerHTML = `
       <div>
-        <strong>${item.name}</strong><br />
+        <strong>${item.title || item.name}</strong><br />
         <small>${item.isDir ? "Каталог" : item.mimeType || "Файл"} · ${formatSize(item.size)}</small>
+        <div class="meta-edit">
+          <input type="text" class="meta-title" placeholder="Название" value="${item.title || ""}" />
+          <input type="text" class="meta-tags" placeholder="Теги через запятую" value="${(item.tags || []).join(", ")}" />
+          <input type="text" class="meta-genres" placeholder="Жанры через запятую" value="${(item.genres || []).join(", ")}" />
+        </div>
       </div>
       <button class="btn">Смотреть</button>
     `;
@@ -106,12 +117,45 @@ const renderLibrary = (items) => {
       });
     }
     card.appendChild(downloadBtn);
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "btn primary";
+    saveBtn.textContent = "Сохранить";
+    saveBtn.addEventListener("click", async () => {
+      const title = card.querySelector(".meta-title").value.trim();
+      const tags = card
+        .querySelector(".meta-tags")
+        .value.split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+      const genres = card
+        .querySelector(".meta-genres")
+        .value.split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+      await fetch("/api/library/item", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: item.path, title, tags, genres }),
+      });
+      await loadLibrary();
+    });
+    card.appendChild(saveBtn);
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "btn";
+    deleteBtn.textContent = "Удалить";
+    deleteBtn.addEventListener("click", async () => {
+      await fetch(`/api/library/item?path=${encodeURIComponent(item.path)}`, {
+        method: "DELETE",
+      });
+      await loadLibrary();
+    });
+    card.appendChild(deleteBtn);
     libraryEl.appendChild(card);
   });
 };
 
-const loadLibrary = async () => {
-  const res = await fetch("/api/library");
+const loadLibrary = async (queryParams = "") => {
+  const res = await fetch(`/api/library${queryParams}`);
   const items = await res.json();
   renderLibrary(items);
 };
@@ -126,9 +170,13 @@ const renderStreams = (streams) => {
         <strong>${stream.name || "Без названия"}</strong><br />
         <small>${stream.url} · ${stream.persist ? "Постоянный" : "Временный"}</small>
       </div>
-      <button class="btn">${stream.active ? "Смотреть" : "Запустить"}</button>
+      <div class="stream-actions">
+        <button class="btn">${stream.active ? "Смотреть" : "Запустить"}</button>
+        <button class="btn">Удалить</button>
+      </div>
     `;
-    card.querySelector("button").addEventListener("click", async () => {
+    const actionButtons = card.querySelectorAll("button");
+    actionButtons[0].addEventListener("click", async () => {
       const res = await fetch(`/api/streams/${stream.id}/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -138,6 +186,10 @@ const renderStreams = (streams) => {
       if (data.url) {
         setPlayerSource(data.url, stream.name || stream.url);
       }
+    });
+    actionButtons[1].addEventListener("click", async () => {
+      await fetch(`/api/streams/${stream.id}`, { method: "DELETE" });
+      await loadStreams();
     });
     streamsEl.appendChild(card);
   });
@@ -165,6 +217,21 @@ const uploadFiles = async (files) => {
 browseBtn.addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", (event) => uploadFiles(event.target.files));
 refreshBtn.addEventListener("click", loadLibrary);
+applySearchBtn.addEventListener("click", () => {
+  const params = new URLSearchParams();
+  if (searchQuery.value.trim()) params.set("q", searchQuery.value.trim());
+  if (searchTags.value.trim()) params.set("tags", searchTags.value.trim());
+  if (searchGenres.value.trim()) params.set("genres", searchGenres.value.trim());
+  const query = params.toString();
+  loadLibrary(query ? `?${query}` : "");
+});
+
+resetSearchBtn.addEventListener("click", () => {
+  searchQuery.value = "";
+  searchTags.value = "";
+  searchGenres.value = "";
+  loadLibrary();
+});
 
 ["dragenter", "dragover"].forEach((eventName) => {
   dropzone.addEventListener(eventName, (event) => {
@@ -217,6 +284,16 @@ const appendChatMessage = (payload) => {
   `;
   chatMessages.appendChild(message);
   chatMessages.scrollTop = chatMessages.scrollHeight;
+
+  if (document.fullscreenElement) {
+    const overlayMessage = document.createElement("div");
+    overlayMessage.className = "chat-overlay-message";
+    overlayMessage.textContent = `${payload.user || "Гость"}: ${payload.text}`;
+    chatOverlay.appendChild(overlayMessage);
+    setTimeout(() => {
+      overlayMessage.remove();
+    }, 6000);
+  }
 };
 
 const sendRoomEvent = async (payload) => {
@@ -262,10 +339,9 @@ const connectRoom = () => {
 const initRoomFromUrl = async () => {
   const params = new URLSearchParams(window.location.search);
   const room = params.get("room");
-  const host = params.get("host");
   if (!room) return;
   roomId = room;
-  isHost = host === "1";
+  isHost = localStorage.getItem(`room-host-${roomId}`) === "1";
   roomStatus.textContent = `Комната ${roomId}`;
   connectRoom();
 
@@ -291,6 +367,7 @@ createRoomBtn.addEventListener("click", async () => {
   const room = await res.json();
   roomId = room.id;
   isHost = true;
+  localStorage.setItem(`room-host-${roomId}`, "1");
   const link = `${window.location.origin}${window.location.pathname}?room=${roomId}`;
   roomLinkInput.value = link;
   roomStatus.textContent = `Комната ${roomId}`;
@@ -315,41 +392,42 @@ sendChatBtn.addEventListener("click", () => {
   chatTextInput.value = "";
 });
 
-player.addEventListener("timeupdate", () => {
+const emitSync = () => {
   if (!roomId || !isHost || isSyncing) return;
-  if (!syncTimer) {
-    syncTimer = setTimeout(() => {
-      sendRoomEvent({
-        type: "sync",
-        url: currentSource,
-        position: player.currentTime,
-        paused: player.paused,
-      });
-      syncTimer = null;
-    }, 1000);
-  }
-});
+  sendRoomEvent({
+    type: "sync",
+    url: currentSource,
+    position: player.currentTime,
+    paused: player.paused,
+  });
+};
 
 player.addEventListener("play", () => {
-  if (roomId && isHost && !isSyncing) {
-    sendRoomEvent({
-      type: "sync",
-      url: currentSource,
-      position: player.currentTime,
-      paused: false,
-    });
-  }
+  emitSync();
 });
 
 player.addEventListener("pause", () => {
-  if (roomId && isHost && !isSyncing) {
-    sendRoomEvent({
-      type: "sync",
-      url: currentSource,
-      position: player.currentTime,
-      paused: true,
-    });
-  }
+  emitSync();
+});
+
+player.addEventListener("seeked", () => {
+  emitSync();
+});
+
+playerInstance = new Plyr(player, {
+  controls: [
+    "play-large",
+    "play",
+    "progress",
+    "current-time",
+    "mute",
+    "volume",
+    "captions",
+    "settings",
+    "pip",
+    "airplay",
+    "fullscreen",
+  ],
 });
 
 loadLibrary();

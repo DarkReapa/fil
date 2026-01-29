@@ -22,16 +22,20 @@ const (
 	mediaDir   = "media"
 	streamDir  = "media/streams"
 	tempDir    = "media/streams/tmp"
+	libraryCfg = "media/library.json"
 	streamsCfg = "media/streams.json"
 )
 
 type libraryItem struct {
 	Name     string    `json:"name"`
+	Title    string    `json:"title"`
 	Path     string    `json:"path"`
 	Size     int64     `json:"size"`
 	ModTime  time.Time `json:"modTime"`
 	IsDir    bool      `json:"isDir"`
 	MimeType string    `json:"mimeType"`
+	Tags     []string  `json:"tags"`
+	Genres   []string  `json:"genres"`
 }
 
 type streamItem struct {
@@ -72,6 +76,17 @@ type roomMessage struct {
 	Paused   bool    `json:"paused"`
 }
 
+type libraryMeta struct {
+	Title  string   `json:"title"`
+	Tags   []string `json:"tags"`
+	Genres []string `json:"genres"`
+}
+
+type libraryStore struct {
+	mu    sync.Mutex
+	items map[string]libraryMeta
+}
+
 func newStreamManager() *streamManager {
 	return &streamManager{procs: make(map[string]*exec.Cmd)}
 }
@@ -81,6 +96,67 @@ func newRoomHub() *roomHub {
 		rooms:   make(map[string]*roomState),
 		clients: make(map[string]map[chan roomMessage]bool),
 	}
+}
+
+func newLibraryStore() *libraryStore {
+	return &libraryStore{items: make(map[string]libraryMeta)}
+}
+
+func (ls *libraryStore) load() error {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+
+	file, err := os.Open(libraryCfg)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	defer file.Close()
+
+	return json.NewDecoder(file).Decode(&ls.items)
+}
+
+func (ls *libraryStore) save() error {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+
+	if err := os.MkdirAll(filepath.Dir(libraryCfg), 0o755); err != nil {
+		return err
+	}
+
+	file, err := os.Create(libraryCfg)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(ls.items)
+}
+
+func (ls *libraryStore) get(path string) (libraryMeta, bool) {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+
+	meta, ok := ls.items[path]
+	return meta, ok
+}
+
+func (ls *libraryStore) set(path string, meta libraryMeta) {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+
+	ls.items[path] = meta
+}
+
+func (ls *libraryStore) delete(path string) {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+
+	delete(ls.items, path)
 }
 
 func (rh *roomHub) create(name, url string) *roomState {
@@ -207,6 +283,25 @@ func (sm *streamManager) get(id string) (streamItem, bool) {
 	return streamItem{}, false
 }
 
+func (sm *streamManager) delete(id string) bool {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	for i, item := range sm.streams {
+		if item.ID == id {
+			if proc, ok := sm.procs[id]; ok && proc.Process != nil {
+				_ = proc.Process.Kill()
+				delete(sm.procs, id)
+			}
+			sm.streams = append(sm.streams[:i], sm.streams[i+1:]...)
+			_ = os.RemoveAll(filepath.Join(streamDir, id))
+			_ = os.RemoveAll(filepath.Join(tempDir, id))
+			return true
+		}
+	}
+	return false
+}
+
 func (sm *streamManager) add(name, url string) (streamItem, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -302,7 +397,7 @@ func sanitizePath(path string) (string, error) {
 	return clean, nil
 }
 
-func listLibrary(root string) ([]libraryItem, error) {
+func listLibrary(root string, store *libraryStore) ([]libraryItem, error) {
 	var items []libraryItem
 
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -317,6 +412,12 @@ func listLibrary(root string) ([]libraryItem, error) {
 		if err != nil {
 			return err
 		}
+		if rel == "streams" || strings.HasPrefix(rel, "streams"+string(filepath.Separator)) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 
 		info, err := d.Info()
 		if err != nil {
@@ -327,14 +428,22 @@ func listLibrary(root string) ([]libraryItem, error) {
 		if !d.IsDir() {
 			mimeType = mime.TypeByExtension(filepath.Ext(path))
 		}
+		meta, _ := store.get(filepath.ToSlash(rel))
+		title := meta.Title
+		if title == "" {
+			title = info.Name()
+		}
 
 		items = append(items, libraryItem{
 			Name:     info.Name(),
+			Title:    title,
 			Path:     filepath.ToSlash(rel),
 			Size:     info.Size(),
 			ModTime:  info.ModTime(),
 			IsDir:    d.IsDir(),
 			MimeType: mimeType,
+			Tags:     meta.Tags,
+			Genres:   meta.Genres,
 		})
 		return nil
 	})
@@ -397,15 +506,97 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-func libraryHandler(w http.ResponseWriter, r *http.Request) {
-	items, err := listLibrary(mediaDir)
-	if err != nil {
-		http.Error(w, "failed to read library", http.StatusInternalServerError)
-		return
-	}
+func libraryHandler(store *libraryStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		items, err := listLibrary(mediaDir, store)
+		if err != nil {
+			http.Error(w, "failed to read library", http.StatusInternalServerError)
+			return
+		}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(items)
+		query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+		tags := parseCSV(r.URL.Query().Get("tags"))
+		genres := parseCSV(r.URL.Query().Get("genres"))
+
+		filtered := make([]libraryItem, 0, len(items))
+		for _, item := range items {
+			if query != "" {
+				target := strings.ToLower(item.Title)
+				if target == "" {
+					target = strings.ToLower(item.Name)
+				}
+				if !strings.Contains(target, query) {
+					continue
+				}
+			}
+			if len(tags) > 0 && !containsAll(item.Tags, tags) {
+				continue
+			}
+			if len(genres) > 0 && !containsAll(item.Genres, genres) {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(filtered)
+	}
+}
+
+func libraryItemHandler(store *libraryStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			var payload struct {
+				Path   string   `json:"path"`
+				Title  string   `json:"title"`
+				Tags   []string `json:"tags"`
+				Genres []string `json:"genres"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, "invalid payload", http.StatusBadRequest)
+				return
+			}
+			clean, err := sanitizePath(payload.Path)
+			if err != nil {
+				http.Error(w, "invalid path", http.StatusBadRequest)
+				return
+			}
+			meta := libraryMeta{
+				Title:  strings.TrimSpace(payload.Title),
+				Tags:   cleanList(payload.Tags),
+				Genres: cleanList(payload.Genres),
+			}
+			store.set(filepath.ToSlash(clean), meta)
+			if err := store.save(); err != nil {
+				log.Printf("failed to save library metadata: %v", err)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodDelete:
+			pathParam := r.URL.Query().Get("path")
+			if pathParam == "" {
+				http.Error(w, "missing path", http.StatusBadRequest)
+				return
+			}
+			clean, err := sanitizePath(pathParam)
+			if err != nil {
+				http.Error(w, "invalid path", http.StatusBadRequest)
+				return
+			}
+			target := filepath.Join(mediaDir, clean)
+			if err := os.RemoveAll(target); err != nil {
+				http.Error(w, "failed to delete", http.StatusInternalServerError)
+				return
+			}
+			store.delete(filepath.ToSlash(clean))
+			if err := store.save(); err != nil {
+				log.Printf("failed to save library metadata: %v", err)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}
 }
 
 func streamsHandler(sm *streamManager) http.HandlerFunc {
@@ -447,37 +638,57 @@ func streamsHandler(sm *streamManager) http.HandlerFunc {
 	}
 }
 
-func streamStartHandler(sm *streamManager) http.HandlerFunc {
+func streamActionHandler(sm *streamManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/api/streams/")
-		id = strings.TrimSuffix(id, "/start")
 		if id == "" {
 			http.Error(w, "missing stream id", http.StatusBadRequest)
 			return
 		}
+		if strings.HasSuffix(id, "/start") {
+			id = strings.TrimSuffix(id, "/start")
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
 
-		var payload struct {
-			Persist *bool `json:"persist"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&payload)
-		persist := true
-		if payload.Persist != nil {
-			persist = *payload.Persist
-		} else if existing, ok := sm.get(id); ok {
-			persist = existing.Persist
-		}
+			var payload struct {
+				Persist *bool `json:"persist"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			persist := true
+			if payload.Persist != nil {
+				persist = *payload.Persist
+			} else if existing, ok := sm.get(id); ok {
+				persist = existing.Persist
+			}
 
-		url, err := sm.start(id, persist)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			url, err := sm.start(id, persist)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := sm.save(); err != nil {
+				log.Printf("failed to save streams: %v", err)
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"url": url})
 			return
 		}
-		if err := sm.save(); err != nil {
-			log.Printf("failed to save streams: %v", err)
+		switch r.Method {
+		case http.MethodDelete:
+			if ok := sm.delete(id); !ok {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			if err := sm.save(); err != nil {
+				log.Printf("failed to save streams: %v", err)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"url": url})
 	}
 }
 
@@ -617,6 +828,48 @@ func roomDetailHandler(rh *roomHub) http.HandlerFunc {
 	}
 }
 
+func parseCSV(input string) []string {
+	parts := strings.Split(input, ",")
+	var out []string
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value != "" {
+			out = append(out, strings.ToLower(value))
+		}
+	}
+	return out
+}
+
+func cleanList(values []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func containsAll(source []string, filters []string) bool {
+	if len(filters) == 0 {
+		return true
+	}
+	lookup := make(map[string]bool)
+	for _, item := range source {
+		lookup[strings.ToLower(item)] = true
+	}
+	for _, filter := range filters {
+		if !lookup[strings.ToLower(filter)] {
+			return false
+		}
+	}
+	return true
+}
+
 func indexHandler(tmpl *template.Template) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -641,17 +894,22 @@ func main() {
 	tmpl := template.Must(template.ParseFiles("templates/index.html"))
 	streams := newStreamManager()
 	rooms := newRoomHub()
+	library := newLibraryStore()
 	if err := streams.load(); err != nil {
 		log.Printf("failed to load streams: %v", err)
+	}
+	if err := library.load(); err != nil {
+		log.Printf("failed to load library metadata: %v", err)
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", indexHandler(tmpl))
 	mux.HandleFunc("/upload", uploadHandler)
 	mux.HandleFunc("/download", downloadHandler)
-	mux.HandleFunc("/api/library", libraryHandler)
+	mux.HandleFunc("/api/library", libraryHandler(library))
+	mux.HandleFunc("/api/library/item", libraryItemHandler(library))
 	mux.HandleFunc("/api/streams", streamsHandler(streams))
-	mux.HandleFunc("/api/streams/", streamStartHandler(streams))
+	mux.HandleFunc("/api/streams/", streamActionHandler(streams))
 	mux.HandleFunc("/api/rooms", roomsHandler(rooms))
 	mux.HandleFunc("/api/rooms/", roomDetailHandler(rooms))
 

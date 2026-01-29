@@ -101,6 +101,21 @@ body {
   margin-bottom: 16px;
 }
 
+.library-search {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.library-search input {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(57, 255, 136, 0.3);
+  background: #09120e;
+  color: var(--text);
+}
+
 .library {
   display: grid;
   gap: 12px;
@@ -111,7 +126,7 @@ body {
 
 .library-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   padding: 12px 16px;
@@ -120,6 +135,26 @@ body {
   border: 1px solid transparent;
   cursor: pointer;
   transition: border 0.2s ease, transform 0.2s ease;
+  flex-wrap: wrap;
+}
+
+.library-item > button {
+  margin-top: 6px;
+}
+
+.meta-edit {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.meta-edit input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(57, 255, 136, 0.25);
+  background: #0a1712;
+  color: var(--text);
 }
 
 .library-item:hover {
@@ -230,6 +265,11 @@ body {
   gap: 10px;
 }
 
+.stream-actions {
+  display: grid;
+  gap: 8px;
+}
+
 .stream-card small {
   color: var(--muted);
 }
@@ -239,9 +279,14 @@ body {
   gap: 16px;
 }
 
-.side-stack {
+.player-chat {
   display: grid;
+  grid-template-columns: 0.75fr 1.25fr;
   gap: 24px;
+}
+
+.player-wrapper {
+  position: relative;
 }
 
 .player {
@@ -250,6 +295,54 @@ body {
   border-radius: 16px;
   background: #000;
   border: 1px solid var(--border);
+}
+
+.plyr--video {
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: 0 18px 30px rgba(0, 0, 0, 0.45);
+}
+
+.plyr--full-ui input[type="range"] {
+  color: var(--neon);
+}
+
+.plyr__control--overlaid {
+  background: rgba(57, 255, 136, 0.2);
+}
+
+.plyr__control {
+  color: var(--text);
+}
+
+.chat-overlay {
+  position: absolute;
+  inset: auto 16px 16px 16px;
+  display: grid;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.chat-overlay-message {
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(4, 10, 7, 0.6);
+  color: rgba(233, 255, 244, 0.85);
+  backdrop-filter: blur(10px);
+  animation: fadeOut 6s forwards;
+}
+
+@keyframes fadeOut {
+  0% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
 }
 
 .player-actions {
@@ -336,7 +429,15 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .player-chat {
+    grid-template-columns: 1fr;
+  }
+
   .watch-together {
+    grid-template-columns: 1fr;
+  }
+
+  .library-search {
     grid-template-columns: 1fr;
   }
 }
