@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -720,6 +721,188 @@ func parseInt64(value string) (int64, error) {
 	return strconv.ParseInt(strings.TrimSpace(value), 10, 64)
 }
 
+func isYouTubeHost(host string) bool {
+	host = strings.ToLower(host)
+	return strings.Contains(host, "youtube.com") || strings.Contains(host, "youtu.be")
+}
+
+func extractYouTubeVideoID(target *url.URL) string {
+	host := strings.ToLower(target.Host)
+	if strings.Contains(host, "youtu.be") {
+		parts := strings.Split(strings.Trim(target.Path, "/"), "/")
+		if len(parts) > 0 && parts[0] != "" {
+			return parts[0]
+		}
+	}
+	if strings.Contains(host, "youtube.com") {
+		if target.Path == "/watch" {
+			return target.Query().Get("v")
+		}
+		if strings.HasPrefix(target.Path, "/shorts/") {
+			parts := strings.Split(strings.Trim(target.Path, "/"), "/")
+			if len(parts) > 1 {
+				return parts[1]
+			}
+		}
+		if strings.HasPrefix(target.Path, "/embed/") {
+			parts := strings.Split(strings.Trim(target.Path, "/"), "/")
+			if len(parts) > 1 {
+				return parts[1]
+			}
+		}
+	}
+	return ""
+}
+
+func extractJSONBlock(input, marker string) (string, bool) {
+	idx := strings.Index(input, marker)
+	if idx == -1 {
+		return "", false
+	}
+	braceStart := strings.Index(input[idx:], "{")
+	if braceStart == -1 {
+		return "", false
+	}
+	start := idx + braceStart
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(input); i++ {
+		ch := input[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		if ch == '"' {
+			inString = true
+			continue
+		}
+		if ch == '{' {
+			depth++
+		} else if ch == '}' {
+			depth--
+			if depth == 0 {
+				return input[start : i+1], true
+			}
+		}
+	}
+	return "", false
+}
+
+func resolveYouTubeMediaURL(ctx context.Context, target *url.URL, userAgent string) (string, error) {
+	videoID := extractYouTubeVideoID(target)
+	if videoID == "" {
+		return "", fmt.Errorf("missing video id")
+	}
+	watchURL := fmt.Sprintf("https://www.youtube.com/watch?v=%s", url.QueryEscape(videoID))
+	if listID := target.Query().Get("list"); listID != "" {
+		watchURL = watchURL + "&list=" + url.QueryEscape(listID)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, watchURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "ru,en;q=0.9")
+	req.Header.Set("Accept-Encoding", "identity")
+	req.Header.Set("Referer", "https://www.youtube.com/")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	body := string(bodyBytes)
+	playerJSON, ok := extractJSONBlock(body, "ytInitialPlayerResponse")
+	if !ok {
+		return "", fmt.Errorf("player response not found")
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(playerJSON), &parsed); err != nil {
+		return "", err
+	}
+	streaming, ok := parsed["streamingData"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("streaming data missing")
+	}
+	var formats []interface{}
+	if items, ok := streaming["formats"].([]interface{}); ok {
+		formats = append(formats, items...)
+	}
+	if items, ok := streaming["adaptiveFormats"].([]interface{}); ok {
+		formats = append(formats, items...)
+	}
+	for _, item := range formats {
+		format, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		mimeType, _ := format["mimeType"].(string)
+		if !strings.Contains(mimeType, "video/mp4") {
+			continue
+		}
+		if urlValue, ok := format["url"].(string); ok && urlValue != "" {
+			return urlValue, nil
+		}
+		if cipher, ok := format["signatureCipher"].(string); ok && cipher != "" {
+			if resolved := resolveYouTubeCipher(cipher); resolved != "" {
+				return resolved, nil
+			}
+		}
+		if cipher, ok := format["cipher"].(string); ok && cipher != "" {
+			if resolved := resolveYouTubeCipher(cipher); resolved != "" {
+				return resolved, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("stream url not found")
+}
+
+func resolveYouTubeCipher(cipher string) string {
+	parsed, err := url.ParseQuery(cipher)
+	if err != nil {
+		return ""
+	}
+	rawURL := parsed.Get("url")
+	if rawURL == "" {
+		return ""
+	}
+	target, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	signature := parsed.Get("sig")
+	if signature == "" {
+		signature = parsed.Get("signature")
+	}
+	if signature == "" {
+		return ""
+	}
+	param := parsed.Get("sp")
+	if param == "" {
+		param = "signature"
+	}
+	query := target.Query()
+	query.Set(param, signature)
+	target.RawQuery = query.Encode()
+	return target.String()
+}
+
 func proxyHandler(w http.ResponseWriter, r *http.Request) {
 	raw := r.URL.Query().Get("url")
 	if raw == "" {
@@ -732,10 +915,38 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userAgent := r.Header.Get("User-Agent")
+	if userAgent == "" {
+		userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	}
+	if isYouTubeHost(targetURL.Host) {
+		if mediaURL, err := resolveYouTubeMediaURL(r.Context(), targetURL, userAgent); err == nil {
+			if parsed, err := url.Parse(mediaURL); err == nil {
+				targetURL = parsed
+			}
+		}
+	}
+
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL.String(), nil)
 	if err != nil {
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
 		return
+	}
+	req.Header.Set("User-Agent", userAgent)
+	if accept := r.Header.Get("Accept"); accept != "" {
+		req.Header.Set("Accept", accept)
+	} else {
+		req.Header.Set("Accept", "*/*")
+	}
+	if acceptLanguage := r.Header.Get("Accept-Language"); acceptLanguage != "" {
+		req.Header.Set("Accept-Language", acceptLanguage)
+	} else {
+		req.Header.Set("Accept-Language", "ru,en;q=0.9")
+	}
+	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Accept-Encoding", "identity")
+	if strings.Contains(strings.ToLower(targetURL.Host), "youtube") || strings.Contains(strings.ToLower(targetURL.Host), "youtu.be") {
+		req.Header.Set("Referer", "https://www.youtube.com/")
 	}
 	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
 		req.Header.Set("Range", rangeHeader)
