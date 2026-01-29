@@ -6,6 +6,7 @@ const browseBtn = document.getElementById("browse");
 const dropzone = document.getElementById("dropzone");
 const refreshBtn = document.getElementById("refresh");
 const player = document.getElementById("player");
+const youtubePlayer = document.getElementById("youtubePlayer");
 const nowPlaying = document.getElementById("nowPlaying");
 const directUrl = document.getElementById("directUrl");
 const playUrlBtn = document.getElementById("playUrl");
@@ -87,6 +88,36 @@ const formatLabel = (url) => {
   return "Источник";
 };
 
+const getYouTubeEmbedUrl = (raw) => {
+  try {
+    const parsed = new URL(raw, window.location.origin);
+    const host = parsed.hostname.toLowerCase();
+    let videoId = "";
+    if (host.includes("youtu.be")) {
+      videoId = parsed.pathname.split("/").filter(Boolean)[0] || "";
+    } else if (host.includes("youtube.com")) {
+      if (parsed.pathname === "/watch") {
+        videoId = parsed.searchParams.get("v") || "";
+      } else if (parsed.pathname.startsWith("/embed/")) {
+        videoId = parsed.pathname.split("/")[2] || "";
+      } else if (parsed.pathname.startsWith("/shorts/")) {
+        videoId = parsed.pathname.split("/")[2] || "";
+      }
+    }
+    const listId = parsed.searchParams.get("list");
+    if (!videoId && listId) {
+      return `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(listId)}&autoplay=1&rel=0`;
+    }
+    if (videoId) {
+      const listParam = listId ? `&list=${encodeURIComponent(listId)}` : "";
+      return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?autoplay=1&rel=0${listParam}`;
+    }
+  } catch (error) {
+    return null;
+  }
+  return null;
+};
+
 const getDisplayLabel = (url, label) => {
   if (!label) {
     return formatLabel(url);
@@ -98,6 +129,28 @@ const getDisplayLabel = (url, label) => {
 };
 
 const setPlayerSource = (url, label) => {
+  const youtubeEmbedUrl = getYouTubeEmbedUrl(url);
+  if (youtubeEmbedUrl) {
+    if (hls) {
+      hls.destroy();
+      hls = null;
+    }
+    player.pause();
+    player.removeAttribute("src");
+    player.load();
+    player.classList.add("player-hidden");
+    youtubePlayer.src = youtubeEmbedUrl;
+    youtubePlayer.classList.add("active");
+    const displayLabel = label || "YouTube";
+    currentSource = url;
+    nowPlaying.textContent = getDisplayLabel(url, displayLabel);
+    return;
+  }
+
+  youtubePlayer.classList.remove("active");
+  youtubePlayer.src = "";
+  player.classList.remove("player-hidden");
+
   const sourceUrl = toProxiedUrl(url);
   if (hls) {
     hls.destroy();

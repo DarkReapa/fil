@@ -367,6 +367,18 @@ body {
   border: 1px solid var(--border);
 }
 
+.player.player-hidden {
+  display: none;
+}
+
+.youtube-player {
+  display: none;
+}
+
+.youtube-player.active {
+  display: block;
+}
+
 .plyr--video {
   border-radius: 16px;
   overflow: hidden;
