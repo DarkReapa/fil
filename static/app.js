@@ -484,9 +484,6 @@ const applySavedOpacity = () => {
   }
 };
 
-document.addEventListener("fullscreenchange", () => {
-  document.body.classList.toggle("fullscreen-active", Boolean(document.fullscreenElement));
-});
 
 const emitSync = () => {
   if (!roomId || !isHost || isSyncing) return;
@@ -525,6 +522,16 @@ playerInstance = new Plyr(player, {
     "fullscreen",
   ],
 });
+
+if (playerInstance && playerInstance.elements && playerInstance.elements.container) {
+  playerInstance.elements.container.appendChild(chatFullscreen);
+  playerInstance.on("enterfullscreen", () => {
+    playerInstance.elements.container.classList.add("fullscreen-active");
+  });
+  playerInstance.on("exitfullscreen", () => {
+    playerInstance.elements.container.classList.remove("fullscreen-active");
+  });
+}
 
 loadLibrary();
 loadStreams();

@@ -354,7 +354,7 @@ body {
   font-size: 0.85rem;
 }
 
-.fullscreen-active .chat-fullscreen {
+.plyr.fullscreen-active .chat-fullscreen {
   display: grid;
 }
 
