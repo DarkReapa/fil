@@ -799,13 +799,52 @@ func extractJSONBlock(input, marker string) (string, bool) {
 	return "", false
 }
 
+func fetchYouTubePlayerResponse(ctx context.Context, videoID, listID, userAgent string) (map[string]interface{}, error) {
+	infoURL := fmt.Sprintf("https://www.youtube.com/get_video_info?video_id=%s&html5=1&c=TVHTML5&cver=7.20201028", url.QueryEscape(videoID))
+	if listID != "" {
+		infoURL = infoURL + "&list=" + url.QueryEscape(listID)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, infoURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Language", "ru,en;q=0.9")
+	req.Header.Set("Accept-Encoding", "identity")
+	req.Header.Set("Referer", "https://www.youtube.com/")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	values, err := url.ParseQuery(string(bodyBytes))
+	if err != nil {
+		return nil, err
+	}
+	playerResponse := values.Get("player_response")
+	if playerResponse == "" {
+		return nil, fmt.Errorf("player response missing")
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(playerResponse), &parsed); err != nil {
+		return nil, err
+	}
+	return parsed, nil
+}
+
 func resolveYouTubeMediaURL(ctx context.Context, target *url.URL, userAgent string) (string, error) {
 	videoID := extractYouTubeVideoID(target)
 	if videoID == "" {
 		return "", fmt.Errorf("missing video id")
 	}
+	listID := target.Query().Get("list")
 	watchURL := fmt.Sprintf("https://www.youtube.com/watch?v=%s", url.QueryEscape(videoID))
-	if listID := target.Query().Get("list"); listID != "" {
+	if listID != "" {
 		watchURL = watchURL + "&list=" + url.QueryEscape(listID)
 	}
 
@@ -829,12 +868,17 @@ func resolveYouTubeMediaURL(ctx context.Context, target *url.URL, userAgent stri
 	}
 	body := string(bodyBytes)
 	playerJSON, ok := extractJSONBlock(body, "ytInitialPlayerResponse")
-	if !ok {
-		return "", fmt.Errorf("player response not found")
-	}
 	var parsed map[string]interface{}
-	if err := json.Unmarshal([]byte(playerJSON), &parsed); err != nil {
-		return "", err
+	if ok {
+		if err := json.Unmarshal([]byte(playerJSON), &parsed); err != nil {
+			return "", err
+		}
+	} else {
+		fallback, err := fetchYouTubePlayerResponse(ctx, videoID, listID, userAgent)
+		if err != nil {
+			return "", fmt.Errorf("player response not found")
+		}
+		parsed = fallback
 	}
 	streaming, ok := parsed["streamingData"].(map[string]interface{})
 	if !ok {
