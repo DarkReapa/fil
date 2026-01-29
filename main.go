@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -813,7 +814,8 @@ func fetchYouTubePlayerResponse(ctx context.Context, videoID, listID, userAgent 
 	req.Header.Set("Accept-Language", "ru,en;q=0.9")
 	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("Referer", "https://www.youtube.com/")
-	resp, err := http.DefaultClient.Do(req)
+	client := youtubeHTTPClient()
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -857,7 +859,8 @@ func resolveYouTubeMediaURL(ctx context.Context, target *url.URL, userAgent stri
 	req.Header.Set("Accept-Language", "ru,en;q=0.9")
 	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("Referer", "https://www.youtube.com/")
-	resp, err := http.DefaultClient.Do(req)
+	client := youtubeHTTPClient()
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -947,6 +950,14 @@ func resolveYouTubeCipher(cipher string) string {
 	return target.String()
 }
 
+func youtubeHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp6", addr)
+	}
+	return &http.Client{Transport: transport}
+}
+
 func proxyHandler(w http.ResponseWriter, r *http.Request) {
 	raw := r.URL.Query().Get("url")
 	if raw == "" {
@@ -996,7 +1007,11 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set("Range", rangeHeader)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	client := http.DefaultClient
+	if isYouTubeHost(targetURL.Host) {
+		client = youtubeHTTPClient()
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(w, "failed to fetch", http.StatusBadGateway)
 		return
