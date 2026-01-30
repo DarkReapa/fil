@@ -77,6 +77,14 @@
         </div>
         <div class="player-wrapper">
           <video id="player" class="player" playsinline></video>
+          <iframe
+            id="youtubePlayer"
+            class="player youtube-player is-hidden"
+            title="YouTube player"
+            referrerpolicy="strict-origin-when-cross-origin"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowfullscreen
+          ></iframe>
           <div class="chat-overlay" id="chatOverlay"></div>
           <div class="chat-fullscreen chat-fullscreen-collapsed chat-hidden" id="chatFullscreen">
             <button class="chat-fullscreen-toggle" id="toggleFullscreenChat" aria-label="Развернуть чат">›</button>
