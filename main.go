@@ -1018,15 +1018,15 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var (
-		resp *http.Response
-		err  error
+		resp     *http.Response
+		fetchErr error
 	)
 	if isYouTubeRequest || isYouTubeMediaHost(targetURL.Host) {
-		resp, err = doYouTubeRequest(req)
+		resp, fetchErr = doYouTubeRequest(req)
 	} else {
-		resp, err = http.DefaultClient.Do(req)
+		resp, fetchErr = http.DefaultClient.Do(req)
 	}
-	if err != nil {
+	if fetchErr != nil {
 		http.Error(w, "failed to fetch", http.StatusBadGateway)
 		return
 	}
