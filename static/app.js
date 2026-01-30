@@ -67,7 +67,20 @@ const formatSize = (size) => {
   return `${value.toFixed(1)} ${units[idx]}`;
 };
 
+const isYouTubeUrl = (url) => {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    return host.includes("youtube.com") || host.includes("youtu.be");
+  } catch (error) {
+    return /(?:youtube\.com|youtu\.be)/i.test(url);
+  }
+};
+
 const toProxiedUrl = (url) => {
+  if (isYouTubeUrl(url)) {
+    return url;
+  }
   if (url.startsWith("http://") || url.startsWith("https://")) {
     return `/api/proxy?url=${encodeURIComponent(url)}`;
   }
