@@ -6,6 +6,7 @@ const browseBtn = document.getElementById("browse");
 const dropzone = document.getElementById("dropzone");
 const refreshBtn = document.getElementById("refresh");
 const player = document.getElementById("player");
+const youtubePlayer = document.getElementById("youtubePlayer");
 const nowPlaying = document.getElementById("nowPlaying");
 const directUrl = document.getElementById("directUrl");
 const playUrlBtn = document.getElementById("playUrl");
@@ -67,11 +68,91 @@ const formatSize = (size) => {
   return `${value.toFixed(1)} ${units[idx]}`;
 };
 
+const isYouTubeUrl = (url) => {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    return host.includes("youtube.com") || host.includes("youtu.be");
+  } catch (error) {
+    return /(?:youtube\.com|youtu\.be)/i.test(url);
+  }
+};
+
 const toProxiedUrl = (url) => {
+  if (isYouTubeUrl(url)) {
+    return url;
+  }
   if (url.startsWith("http://") || url.startsWith("https://")) {
     return `/api/proxy?url=${encodeURIComponent(url)}`;
   }
   return url;
+};
+
+const getYouTubeVideoInfo = (url) => {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const listId = parsed.searchParams.get("list");
+    if (host.includes("youtu.be")) {
+      const id = parsed.pathname.replace("/", "");
+      return { id, listId };
+    }
+    if (parsed.pathname === "/watch") {
+      return { id: parsed.searchParams.get("v"), listId };
+    }
+    if (parsed.pathname.startsWith("/shorts/")) {
+      const parts = parsed.pathname.split("/").filter(Boolean);
+      return { id: parts[1], listId };
+    }
+    if (parsed.pathname.startsWith("/embed/")) {
+      const parts = parsed.pathname.split("/").filter(Boolean);
+      return { id: parts[1], listId };
+    }
+    return { id: "", listId };
+  } catch (error) {
+    return { id: "", listId: "" };
+  }
+};
+
+const toYouTubeEmbedUrl = (url) => {
+  const { id, listId } = getYouTubeVideoInfo(url);
+  if (!id) return "";
+  const params = new URLSearchParams({ autoplay: "1", rel: "0" });
+  if (listId) {
+    params.set("list", listId);
+    params.set("listType", "playlist");
+  }
+  return `https://www.youtube.com/embed/${id}?${params.toString()}`;
+};
+
+const setYouTubeMode = (enabled, embedUrl) => {
+  if (!youtubePlayer) return;
+  const container = playerInstance?.elements?.container;
+  if (enabled) {
+    if (hls) {
+      hls.destroy();
+      hls = null;
+    }
+    player.pause();
+    player.removeAttribute("src");
+    player.load();
+    if (container) {
+      container.classList.add("is-hidden");
+    } else {
+      player.classList.add("is-hidden");
+    }
+    youtubePlayer.src = embedUrl || "";
+    youtubePlayer.classList.remove("is-hidden");
+    updateAudioTracks();
+  } else {
+    youtubePlayer.src = "";
+    youtubePlayer.classList.add("is-hidden");
+    if (container) {
+      container.classList.remove("is-hidden");
+    } else {
+      player.classList.remove("is-hidden");
+    }
+  }
 };
 
 const formatLabel = (url) => {
@@ -102,6 +183,13 @@ const getDisplayLabel = (url, label) => {
 };
 
 const setPlayerSource = (url, label) => {
+  if (isYouTubeUrl(url)) {
+    setYouTubeMode(true, toYouTubeEmbedUrl(url));
+    currentSource = url;
+    nowPlaying.textContent = getDisplayLabel(url, label);
+    return;
+  }
+  setYouTubeMode(false);
   const sourceUrl = toProxiedUrl(url);
   if (hls) {
     hls.destroy();
