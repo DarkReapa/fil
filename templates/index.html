@@ -52,6 +52,10 @@
         <p>Перетащите фильмы/сериалы сюда или выберите файлы/каталоги.</p>
         <button class="btn primary" id="browse">Выбрать файлы или папки</button>
       </div>
+      <div class="upload-target">
+        <label for="uploadTarget">Сохранять в каталог</label>
+        <select id="uploadTarget"></select>
+      </div>
       <div class="upload-progress" id="uploadProgress"></div>
       <div class="upload-list" id="uploadList"></div>
 
@@ -77,6 +81,14 @@
         </div>
         <div class="player-wrapper">
           <video id="player" class="player" playsinline></video>
+          <iframe
+            id="youtubePlayer"
+            class="player youtube-player is-hidden"
+            title="YouTube player"
+            referrerpolicy="strict-origin-when-cross-origin"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowfullscreen
+          ></iframe>
           <div class="chat-overlay" id="chatOverlay"></div>
           <div class="chat-fullscreen chat-fullscreen-collapsed chat-hidden" id="chatFullscreen">
             <button class="chat-fullscreen-toggle" id="toggleFullscreenChat" aria-label="Развернуть чат">›</button>
