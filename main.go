@@ -727,6 +727,11 @@ func isYouTubeHost(host string) bool {
 	return strings.Contains(host, "youtube.com") || strings.Contains(host, "youtu.be")
 }
 
+func isYouTubeMediaHost(host string) bool {
+	host = strings.ToLower(host)
+	return strings.Contains(host, "googlevideo.com") || strings.Contains(host, "youtube.com") || strings.Contains(host, "youtu.be")
+}
+
 func extractYouTubeVideoID(target *url.URL) string {
 	host := strings.ToLower(target.Host)
 	if strings.Contains(host, "youtu.be") {
@@ -970,11 +975,13 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isYouTubeRequest := isYouTubeHost(targetURL.Host)
+
 	userAgent := r.Header.Get("User-Agent")
 	if userAgent == "" {
 		userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 	}
-	if isYouTubeHost(targetURL.Host) {
+	if isYouTubeRequest {
 		if mediaURL, err := resolveYouTubeMediaURL(r.Context(), targetURL, userAgent); err == nil {
 			if parsed, err := url.Parse(mediaURL); err == nil {
 				targetURL = parsed
@@ -1000,15 +1007,16 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Set("Accept-Encoding", "identity")
-	if strings.Contains(strings.ToLower(targetURL.Host), "youtube") || strings.Contains(strings.ToLower(targetURL.Host), "youtu.be") {
+	if isYouTubeRequest || isYouTubeMediaHost(targetURL.Host) {
 		req.Header.Set("Referer", "https://www.youtube.com/")
+		req.Header.Set("Origin", "https://www.youtube.com")
 	}
 	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
 		req.Header.Set("Range", rangeHeader)
 	}
 
 	client := http.DefaultClient
-	if isYouTubeHost(targetURL.Host) {
+	if isYouTubeRequest || isYouTubeMediaHost(targetURL.Host) {
 		client = youtubeHTTPClient()
 	}
 	resp, err := client.Do(req)
