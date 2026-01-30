@@ -732,6 +732,8 @@ func isYouTubeMediaHost(host string) bool {
 	return strings.Contains(host, "googlevideo.com") || strings.Contains(host, "youtube.com") || strings.Contains(host, "youtu.be")
 }
 
+const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+
 func extractYouTubeVideoID(target *url.URL) string {
 	host := strings.ToLower(target.Host)
 	if strings.Contains(host, "youtu.be") {
@@ -981,7 +983,7 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 	userAgent := r.Header.Get("User-Agent")
 	if userAgent == "" {
-		userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+		userAgent = defaultUserAgent
 	}
 	if isYouTubeRequest {
 		if mediaURL, err := resolveYouTubeMediaURL(r.Context(), targetURL, userAgent); err == nil {
@@ -1012,6 +1014,13 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 	if isYouTubeRequest || isYouTubeMediaHost(targetURL.Host) {
 		req.Header.Set("Referer", "https://www.youtube.com/")
 		req.Header.Set("Origin", "https://www.youtube.com")
+		req.Header.Set("Sec-Fetch-Dest", "document")
+		req.Header.Set("Sec-Fetch-Mode", "navigate")
+		req.Header.Set("Sec-Fetch-Site", "same-site")
+		req.Header.Set("Sec-Fetch-User", "?1")
+		req.Header.Set("Sec-CH-UA", "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\", \"Google Chrome\";v=\"122\"")
+		req.Header.Set("Sec-CH-UA-Mobile", "?0")
+		req.Header.Set("Sec-CH-UA-Platform", "\"Windows\"")
 	}
 	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
 		req.Header.Set("Range", rangeHeader)
