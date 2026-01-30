@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Neon Media Library</title>
+  <title>I6P Library</title>
   <link rel="stylesheet" href="/static/styles.css" />
   <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -14,7 +14,7 @@
   <div class="glow"></div>
   <header class="topbar">
     <div>
-      <p class="eyebrow">Neon Library</p>
+      <p class="eyebrow">I6P Library</p>
       <h1>Фильмы, сериалы и трансляции в одном месте</h1>
       <p class="subtitle">Загружайте каталоги, добавляйте URL, запускайте RTMP через HLS и смотрите всё с одного плеера.</p>
     </div>
@@ -36,6 +36,11 @@
         <input type="text" id="searchGenres" placeholder="Жанры через запятую" />
         <button class="btn" id="applySearch">Найти</button>
         <button class="btn" id="resetSearch">Сбросить</button>
+      </div>
+      <div class="library-folder">
+        <input type="text" id="seriesName" placeholder="Название сериала" />
+        <input type="number" id="seasonCount" min="1" max="50" placeholder="Сезонов" />
+        <button class="btn primary" id="createSeries">Создать каталог</button>
       </div>
       <div class="library" id="library"></div>
     </section>
@@ -89,6 +94,12 @@
           <input type="url" id="directUrl" placeholder="Вставьте ссылку на видео или поток" />
           <button class="btn" id="playUrl">Смотреть по URL</button>
         </div>
+        <div class="player-audio">
+          <label for="audioTrackSelect">Звуковая дорожка</label>
+          <select id="audioTrackSelect" disabled>
+            <option>Недоступно</option>
+          </select>
+        </div>
         <div class="watch-together">
           <button class="btn primary" id="createRoom">Создать комнату</button>
           <input type="text" id="roomLink" placeholder="Ссылка для совместного просмотра" readonly />
@@ -100,7 +111,7 @@
 
       <section class="panel chat-panel chat-hidden" id="chatPanel">
         <div class="panel-header">
-          <h2>Чат трансляции</h2>
+          <h2>Чат</h2>
           <div class="chat-controls">
             <label class="chat-opacity">
               <span>Прозрачность</span>
@@ -125,7 +136,7 @@
 
   <div class="chat-toast" id="chatToast">Новое сообщение в чате</div>
 
-  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
   <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
   <script src="/static/app.js"></script>
 </body>
