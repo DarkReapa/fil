@@ -1636,12 +1636,12 @@ func main() {
 	mux.Handle("/streams/", http.StripPrefix("/streams/", http.FileServer(http.Dir(streamDir))))
 
 	server := &http.Server{
-		Addr:              ":8080",
+		Addr:              ":8087",
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Println("Neon Media Library running on http://localhost:8080")
+	log.Println("Neon Media Library running on http://localhost:8087")
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
