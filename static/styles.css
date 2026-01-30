@@ -383,6 +383,14 @@ body {
   border: 1px solid var(--border);
 }
 
+.youtube-player {
+  border: 1px solid var(--border);
+}
+
+.is-hidden {
+  display: none !important;
+}
+
 .plyr--video {
   border-radius: 16px;
   overflow: hidden;
