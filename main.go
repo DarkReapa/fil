@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -733,6 +734,7 @@ func isYouTubeMediaHost(host string) bool {
 }
 
 const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+const youtubeAPIKey = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
 
 func extractYouTubeVideoID(target *url.URL) string {
 	host := strings.ToLower(target.Host)
@@ -845,6 +847,56 @@ func fetchYouTubePlayerResponse(ctx context.Context, videoID, listID, userAgent 
 	return parsed, nil
 }
 
+func fetchYouTubePlayerViaAPI(ctx context.Context, videoID, listID, userAgent string) (map[string]interface{}, error) {
+	if videoID == "" {
+		return nil, fmt.Errorf("missing video id")
+	}
+	payload := map[string]interface{}{
+		"videoId": videoID,
+		"context": map[string]interface{}{
+			"client": map[string]interface{}{
+				"clientName":    "WEB",
+				"clientVersion": "2.20240201.01.00",
+				"hl":            "en",
+				"gl":            "US",
+			},
+		},
+	}
+	if listID != "" {
+		payload["playlistId"] = listID
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	apiURL := fmt.Sprintf("https://www.youtube.com/youtubei/v1/player?key=%s", youtubeAPIKey)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Language", "ru,en;q=0.9")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://www.youtube.com")
+	req.Header.Set("Referer", "https://www.youtube.com/")
+	req.Header.Set("X-Youtube-Client-Name", "1")
+	req.Header.Set("X-Youtube-Client-Version", "2.20240201.01.00")
+	resp, err := doYouTubeRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusBadRequest {
+		return nil, fmt.Errorf("player api status %d", resp.StatusCode)
+	}
+	var parsed map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, err
+	}
+	return parsed, nil
+}
+
 func resolveYouTubeMediaURL(ctx context.Context, target *url.URL, userAgent string) (string, error) {
 	videoID := extractYouTubeVideoID(target)
 	if videoID == "" {
@@ -884,9 +936,14 @@ func resolveYouTubeMediaURL(ctx context.Context, target *url.URL, userAgent stri
 	} else {
 		fallback, err := fetchYouTubePlayerResponse(ctx, videoID, listID, userAgent)
 		if err != nil {
-			return "", fmt.Errorf("player response not found")
+			apiFallback, apiErr := fetchYouTubePlayerViaAPI(ctx, videoID, listID, userAgent)
+			if apiErr != nil {
+				return "", fmt.Errorf("player response not found")
+			}
+			parsed = apiFallback
+		} else {
+			parsed = fallback
 		}
-		parsed = fallback
 	}
 	streaming, ok := parsed["streamingData"].(map[string]interface{})
 	if !ok {
