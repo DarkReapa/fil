@@ -153,8 +153,20 @@ body {
   flex-wrap: wrap;
 }
 
-.library-item > button {
+.library-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.library-item:hover .library-actions,
+.library-item:focus-within .library-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .meta-edit {
@@ -190,6 +202,24 @@ body {
   text-align: center;
   background: rgba(8, 16, 13, 0.6);
   transition: border 0.2s ease, box-shadow 0.2s ease;
+}
+
+.upload-target {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.upload-target label {
+  color: var(--muted);
+}
+
+.upload-target select {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(57, 255, 136, 0.3);
+  background: #09120e;
+  color: var(--text);
 }
 
 .upload-area.active {
@@ -381,6 +411,14 @@ body {
   border-radius: 16px;
   background: #000;
   border: 1px solid var(--border);
+}
+
+.youtube-player {
+  border: 1px solid var(--border);
+}
+
+.is-hidden {
+  display: none !important;
 }
 
 .plyr--video {

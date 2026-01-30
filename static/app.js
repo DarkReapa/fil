@@ -3,9 +3,11 @@ const uploadProgress = document.getElementById("uploadProgress");
 const uploadList = document.getElementById("uploadList");
 const fileInput = document.getElementById("fileInput");
 const browseBtn = document.getElementById("browse");
+const uploadTargetSelect = document.getElementById("uploadTarget");
 const dropzone = document.getElementById("dropzone");
 const refreshBtn = document.getElementById("refresh");
 const player = document.getElementById("player");
+const youtubePlayer = document.getElementById("youtubePlayer");
 const nowPlaying = document.getElementById("nowPlaying");
 const directUrl = document.getElementById("directUrl");
 const playUrlBtn = document.getElementById("playUrl");
@@ -51,6 +53,8 @@ let eventSource = null;
 let isSyncing = false;
 let isChatCollapsed = false;
 let isFullscreenChatCollapsed = true;
+let lastSyncedPosition = 0;
+let roomSyncTimer = null;
 
 const uploads = new Map();
 const chunkSize = 5 * 1024 * 1024;
@@ -67,11 +71,91 @@ const formatSize = (size) => {
   return `${value.toFixed(1)} ${units[idx]}`;
 };
 
+const isYouTubeUrl = (url) => {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    return host.includes("youtube.com") || host.includes("youtu.be");
+  } catch (error) {
+    return /(?:youtube\.com|youtu\.be)/i.test(url);
+  }
+};
+
 const toProxiedUrl = (url) => {
+  if (isYouTubeUrl(url)) {
+    return url;
+  }
   if (url.startsWith("http://") || url.startsWith("https://")) {
     return `/api/proxy?url=${encodeURIComponent(url)}`;
   }
   return url;
+};
+
+const getYouTubeVideoInfo = (url) => {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const listId = parsed.searchParams.get("list");
+    if (host.includes("youtu.be")) {
+      const id = parsed.pathname.replace("/", "");
+      return { id, listId };
+    }
+    if (parsed.pathname === "/watch") {
+      return { id: parsed.searchParams.get("v"), listId };
+    }
+    if (parsed.pathname.startsWith("/shorts/")) {
+      const parts = parsed.pathname.split("/").filter(Boolean);
+      return { id: parts[1], listId };
+    }
+    if (parsed.pathname.startsWith("/embed/")) {
+      const parts = parsed.pathname.split("/").filter(Boolean);
+      return { id: parts[1], listId };
+    }
+    return { id: "", listId };
+  } catch (error) {
+    return { id: "", listId: "" };
+  }
+};
+
+const toYouTubeEmbedUrl = (url) => {
+  const { id, listId } = getYouTubeVideoInfo(url);
+  if (!id) return "";
+  const params = new URLSearchParams({ autoplay: "0", rel: "0", playsinline: "1" });
+  if (listId) {
+    params.set("list", listId);
+    params.set("listType", "playlist");
+  }
+  return `https://www.youtube.com/embed/${id}?${params.toString()}`;
+};
+
+const setYouTubeMode = (enabled, embedUrl) => {
+  if (!youtubePlayer) return;
+  const container = playerInstance?.elements?.container;
+  if (enabled) {
+    if (hls) {
+      hls.destroy();
+      hls = null;
+    }
+    player.pause();
+    player.removeAttribute("src");
+    player.load();
+    if (container) {
+      container.classList.add("is-hidden");
+    } else {
+      player.classList.add("is-hidden");
+    }
+    youtubePlayer.src = embedUrl || "";
+    youtubePlayer.classList.remove("is-hidden");
+    setAudioTrackUnavailable("Выбор дорожки доступен в плеере YouTube");
+  } else {
+    youtubePlayer.src = "";
+    youtubePlayer.classList.add("is-hidden");
+    if (container) {
+      container.classList.remove("is-hidden");
+    } else {
+      player.classList.remove("is-hidden");
+    }
+  }
 };
 
 const formatLabel = (url) => {
@@ -102,6 +186,18 @@ const getDisplayLabel = (url, label) => {
 };
 
 const setPlayerSource = (url, label) => {
+  if (isYouTubeUrl(url)) {
+    const embedUrl = toYouTubeEmbedUrl(url);
+    if (!embedUrl) {
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    setYouTubeMode(true, embedUrl);
+    currentSource = url;
+    nowPlaying.textContent = getDisplayLabel(url, label);
+    return;
+  }
+  setYouTubeMode(false);
   const sourceUrl = toProxiedUrl(url);
   if (hls) {
     hls.destroy();
@@ -139,6 +235,9 @@ const renderLibrary = (items) => {
   }
 
   items.forEach((item) => {
+    const originalTitle = item.title || "";
+    const originalTags = (item.tags || []).join(", ");
+    const originalGenres = (item.genres || []).join(", ");
     const card = document.createElement("div");
     card.className = "library-item";
     card.innerHTML = `
@@ -146,22 +245,28 @@ const renderLibrary = (items) => {
         <strong>${item.title || item.name}</strong><br />
         <small>${item.isDir ? "Каталог" : item.mimeType || "Файл"} · ${formatSize(item.size)}</small>
         <div class="meta-edit">
-          <input type="text" class="meta-title" placeholder="Название" value="${item.title || ""}" />
-          <input type="text" class="meta-tags" placeholder="Теги через запятую" value="${(item.tags || []).join(", ")}" />
-          <input type="text" class="meta-genres" placeholder="Жанры через запятую" value="${(item.genres || []).join(", ")}" />
+          <input type="text" class="meta-title" placeholder="Название" value="${originalTitle}" />
+          <input type="text" class="meta-tags" placeholder="Теги через запятую" value="${originalTags}" />
+          <input type="text" class="meta-genres" placeholder="Жанры через запятую" value="${originalGenres}" />
         </div>
       </div>
-      <button class="btn">Смотреть</button>
     `;
 
+    const actions = document.createElement("div");
+    actions.className = "library-actions";
+
+    const watchBtn = document.createElement("button");
+    watchBtn.className = "btn";
+    watchBtn.textContent = "Смотреть";
     if (!item.isDir) {
-      card.querySelector("button").addEventListener("click", () => {
+      watchBtn.addEventListener("click", () => {
         const url = `/media/${item.path}`;
         setPlayerSource(url, item.name);
       });
     } else {
-      card.querySelector("button").disabled = true;
+      watchBtn.disabled = true;
     }
+    actions.appendChild(watchBtn);
     const downloadBtn = document.createElement("button");
     downloadBtn.className = "btn";
     downloadBtn.textContent = "Скачать";
@@ -172,10 +277,12 @@ const renderLibrary = (items) => {
         window.open(`/download?path=${encodeURIComponent(item.path)}`, "_blank");
       });
     }
-    card.appendChild(downloadBtn);
+    actions.appendChild(downloadBtn);
     const saveBtn = document.createElement("button");
     saveBtn.className = "btn primary";
     saveBtn.textContent = "Сохранить";
+    saveBtn.disabled = true;
+    saveBtn.style.display = "none";
     saveBtn.addEventListener("click", async () => {
       const title = card.querySelector(".meta-title").value.trim();
       const tags = card
@@ -193,9 +300,11 @@ const renderLibrary = (items) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: item.path, title, tags, genres }),
       });
+      saveBtn.disabled = true;
+      saveBtn.style.display = "none";
       await loadLibrary();
     });
-    card.appendChild(saveBtn);
+    actions.appendChild(saveBtn);
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "btn";
     deleteBtn.textContent = "Удалить";
@@ -205,7 +314,24 @@ const renderLibrary = (items) => {
       });
       await loadLibrary();
     });
-    card.appendChild(deleteBtn);
+    actions.appendChild(deleteBtn);
+    const updateSaveState = () => {
+      const title = card.querySelector(".meta-title").value.trim();
+      const tags = card.querySelector(".meta-tags").value.trim();
+      const genres = card.querySelector(".meta-genres").value.trim();
+      const changed =
+        title !== originalTitle ||
+        tags !== originalTags ||
+        genres !== originalGenres;
+      saveBtn.disabled = !changed;
+      saveBtn.style.display = changed ? "" : "none";
+    };
+    card.querySelectorAll(".meta-title, .meta-tags, .meta-genres").forEach((input) => {
+      input.addEventListener("input", updateSaveState);
+      input.addEventListener("blur", updateSaveState);
+    });
+    updateSaveState();
+    card.appendChild(actions);
     libraryEl.appendChild(card);
   });
 };
@@ -219,6 +345,31 @@ const loadLibrary = async (queryParams = "") => {
   const res = await fetch(`/api/library${queryParams}`);
   const items = await res.json();
   renderLibrary(items);
+  if (!queryParams) {
+    await loadUploadTargets();
+  }
+};
+
+const loadUploadTargets = async () => {
+  if (!uploadTargetSelect) return;
+  uploadTargetSelect.innerHTML = "";
+  const rootOption = document.createElement("option");
+  rootOption.value = "";
+  rootOption.textContent = "Корень медиатеки";
+  uploadTargetSelect.appendChild(rootOption);
+  try {
+    const res = await fetch("/api/library/folders");
+    if (!res.ok) return;
+    const data = await res.json();
+    (data || []).forEach((entry) => {
+      const option = document.createElement("option");
+      option.value = entry.path;
+      option.textContent = `${"—".repeat(entry.depth || 0)} ${entry.name || entry.path}`;
+      uploadTargetSelect.appendChild(option);
+    });
+  } catch (error) {
+    // ignore fetch errors
+  }
 };
 
 const createSeriesFolder = async () => {
@@ -238,17 +389,23 @@ const createSeriesFolder = async () => {
     seriesNameInput.value = "";
     seasonCountInput.value = "";
     await loadLibrary();
+    await loadUploadTargets();
   } finally {
     createSeriesBtn.disabled = false;
   }
+};
+
+const setAudioTrackUnavailable = (message) => {
+  if (!audioTrackSelect) return;
+  audioTrackSelect.innerHTML = `<option>${message}</option>`;
+  audioTrackSelect.disabled = true;
 };
 
 const updateAudioTracks = () => {
   if (!audioTrackSelect) return;
   const tracks = player.audioTracks;
   if (!tracks || tracks.length === 0) {
-    audioTrackSelect.innerHTML = "<option>Недоступно</option>";
-    audioTrackSelect.disabled = true;
+    setAudioTrackUnavailable("Недоступно");
     return;
   }
   audioTrackSelect.innerHTML = "";
@@ -454,8 +611,10 @@ const startUpload = async (entry) => {
 const uploadFiles = async (files) => {
   if (!files.length) return;
   uploadProgress.textContent = `Загружаем ${files.length} файлов...`;
+  const targetPrefix = uploadTargetSelect ? uploadTargetSelect.value.trim() : "";
   Array.from(files).forEach((file) => {
-    const path = file.webkitRelativePath || file.name;
+    const relativePath = file.webkitRelativePath || file.name;
+    const path = targetPrefix ? `${targetPrefix}/${relativePath}` : relativePath;
     const ui = createUploadItem(file);
     const entry = {
       file,
@@ -675,6 +834,7 @@ const connectRoom = () => {
         setPlayerSource(data.url, data.url);
       }
       if (typeof data.position === "number") {
+        lastSyncedPosition = data.position;
         if (Math.abs(player.currentTime - data.position) > 1) {
           player.currentTime = data.position;
         }
@@ -687,6 +847,17 @@ const connectRoom = () => {
       isSyncing = false;
     }
   };
+  if (roomSyncTimer) {
+    clearInterval(roomSyncTimer);
+    roomSyncTimer = null;
+  }
+  if (isHost) {
+    roomSyncTimer = setInterval(() => {
+      if (roomId && !isSyncing && !player.paused) {
+        emitSync();
+      }
+    }, 5000);
+  }
 };
 
 const initRoomFromUrl = async () => {
@@ -708,6 +879,9 @@ const initRoomFromUrl = async () => {
     const state = await res.json();
     if (state.url) {
       setPlayerSource(state.url, state.name || state.url);
+    }
+    if (typeof state.position === "number") {
+      lastSyncedPosition = state.position;
     }
   }
   const savedName = localStorage.getItem(`room-name-${roomId}`);
@@ -816,6 +990,10 @@ deleteRoomBtn.addEventListener("click", async () => {
   if (eventSource) {
     eventSource.close();
   }
+  if (roomSyncTimer) {
+    clearInterval(roomSyncTimer);
+    roomSyncTimer = null;
+  }
 });
 
 const applySavedOpacity = () => {
@@ -834,6 +1012,7 @@ const applySavedOpacity = () => {
 
 const emitSync = () => {
   if (!roomId || !isHost || isSyncing) return;
+  lastSyncedPosition = player.currentTime;
   sendRoomEvent({
     type: "sync",
     url: currentSource,
@@ -852,6 +1031,16 @@ player.addEventListener("pause", () => {
 
 player.addEventListener("seeked", () => {
   emitSync();
+});
+
+player.addEventListener("seeking", () => {
+  if (!roomId || isHost || isSyncing) return;
+  isSyncing = true;
+  player.currentTime = lastSyncedPosition || 0;
+  showChatToast("Перемотка доступна только создателю комнаты.");
+  setTimeout(() => {
+    isSyncing = false;
+  }, 300);
 });
 
 playerInstance = new Plyr(player, {
